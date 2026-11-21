@@ -2,7 +2,7 @@
 
 
 
-A neural surrogate that predicts 2D airflow around airfoils from an image of the shape, trained on the \[AirfRANS](https://airfrans.readthedocs.io) benchmark (RANS solutions of Navier-Stokes).
+A neural surrogate that predicts 2D airflow around airfoils from an image of the shape, trained on the \[AirfRANS](https://airfrans.readthedocs.io) benchmark (RANS solutions of the Navier-Stokes equations).
 
 
 
@@ -11,6 +11,8 @@ Instead of solving the equations numerically for every new shape, the model lear
 
 
 \## Planned outputs
+
+
 
 1\. \*\*Flow field:\*\* pressure and velocity around the airfoil
 
@@ -21,6 +23,8 @@ Instead of solving the equations numerically for every new shape, the model lear
 
 
 \## Status
+
+
 
 \- \[x] Training and evaluation pipeline (tested on synthetic data)
 
@@ -42,25 +46,51 @@ Instead of solving the equations numerically for every new shape, the model lear
 
 \## Setup
 
-```
 
-pip install -r requirements.txt
 
-python src/download.py      # AirfRANS (needs the airfrans package)
+Install the requirements:
 
-python src/convert.py       # save as NumPy files
 
-python src/train.py --epochs 50
 
-python src/evaluate.py
+&#x20;   pip install -r requirements.txt
 
-```
+
+
+Download and convert the data (needs the airfrans package):
+
+
+
+&#x20;   python src/download.py
+
+&#x20;   python src/convert.py
+
+
+
+Train and evaluate:
+
+
+
+&#x20;   python src/train.py --epochs 50
+
+&#x20;   python src/evaluate.py
 
 
 
 \## Results
 
-Real results will be added here after training on AirfRANS.
+
+
+| Model | Pressure error | Velocity error | Time per sample |
+
+|-------|----------------|----------------|-----------------|
+
+| U-Net | to be added | to be added | to be added |
+
+| FNO | to be added | to be added | to be added |
+
+
+
+Real results will be added after training on AirfRANS.
 
 
 
