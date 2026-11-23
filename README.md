@@ -1,6 +1,6 @@
 # Navier-Stokes Flow Predictor
 
-
+ 
 
 A neural surrogate that predicts 2D airflow around airfoils from an image of the shape, trained on the [AirfRANS](https://airfrans.readthedocs.io) benchmark (RANS solutions of the Navier-Stokes equations).
 
