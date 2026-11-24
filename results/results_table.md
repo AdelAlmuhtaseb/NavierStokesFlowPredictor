@@ -1,4 +1,6 @@
-| Model | Pressure error | Velocity u error | Velocity v error | ms/sample | Parameters |
-|-------|----------------|------------------|------------------|-----------|------------|
-| U-Net | 0.058 | 0.013 | 0.192 | 3.7 | 481,779 |
-| FNO | 0.081 | 0.018 | 0.116 | 12.7 | 1,186,307 |
+| Model | velocity u error | velocity v error | pressure Cp error | ms/sample | Parameters | Training samples |
+|---|---|---|---|---|---|---|
+| U-Net | 0.008 | 0.097 | 0.093 | 4.0 | 482,067 | 1200 |
+
+Panel solver: 167 ms per sample on this computer.
+U-Net is about 42x faster than the solver.
