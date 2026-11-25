@@ -1,0 +1,8 @@
+model,data,ntrain,lr,epochs,batch,seed,val_error_mean,val_err_u,val_err_v,val_err_cp,train_seconds
+unet,panel_dataset,1200,0.01,100,32,0,0.4725,0.0891,0.5577,0.7706,65
+unet,panel_dataset,1200,0.003,100,32,0,0.0486,0.0066,0.0637,0.0754,65
+unet,panel_dataset,1200,0.0003,100,32,0,0.0519,0.0065,0.0716,0.0778,65
+unet,panel_dataset,1200,0.0001,100,32,0,0.0906,0.0106,0.1292,0.1320,67
+unet,panel_dataset,1200,0.001,300,32,0,0.0346,0.0042,0.0477,0.0521,200
+unet,panel_dataset,1200,0.001,100,32,1,0.0378,0.0051,0.0493,0.0590,66
+unet,panel_dataset,1200,0.001,100,32,2,0.0407,0.0052,0.0532,0.0638,66

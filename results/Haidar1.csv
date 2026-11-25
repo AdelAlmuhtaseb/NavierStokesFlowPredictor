@@ -1,0 +1,3 @@
+model,data,ntrain,lr,epochs,batch,seed,val_error_mean,val_err_u,val_err_v,val_err_cp,train_seconds
+unet,panel_dataset,1200,0.001,100,32,0,0.0395,0.0048,0.0548,0.0589,69
+fno,panel_dataset,1200,0.001,100,32,0,0.2934,0.0416,0.3991,0.4394,178
