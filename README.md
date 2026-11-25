@@ -95,3 +95,41 @@ The figure below comes from **synthetic placeholder data** and only shows that t
 
 ![placeholder](results/comparison.png)
 
+
+
+## Independent AirfRANS test protocol
+
+For an unbiased final result, keep the official AirfRANS training and test splits separate. Do not use the official test split for epoch-by-epoch validation, hyperparameter selection, or model selection.
+
+1. Download the official data if it is not already present:
+
+       python src/download.py
+
+2. Convert the two official splits into separate files:
+
+       python src/convert_airfrans.py --root data/Dataset --out-dir data --grid 64
+
+   This creates \`data/airfrans_train_g64.npz\` (official training split) and
+   \`data/airfrans_test_g64.npz\` (official test split). The converter no longer
+   combines them unless \`--combined-out\` is explicitly supplied.
+
+3. Train a fresh model using only the official training split. The training
+   script reserves 20% of those 800 training cases for validation (640 train,
+   160 validation), and only evaluates on the official test split once training
+   has finished:
+
+       python src/train.py --model unet --data data/airfrans_train_g64.npz --test data/airfrans_test_g64.npz --epochs 100 --batch 32 --lr 0.001 --sched cosine --base 16 --name unet_airfrans_g64_independent
+
+4. Independently reproduce/report the saved checkpoint's test metrics:
+
+       python src/evaluate_airfrans_test.py --data data/airfrans_test_g64.npz --checkpoint results/unet_airfrans_g64_independent.pt
+
+The evaluator reports mean, median and 90th-percentile per-simulation relative
+L2 errors for u/U, v/U and Cp, plus inference time, and writes
+\`results/airfrans_independent_test.csv\`.
+
+**Important:** the earlier \`7.14%\` result came from a workflow that used the
+official 200-case test split as validation during training. It should be
+labelled a validation result, not an independent test result. The fresh
+checkpoint and untouched official test metrics from this protocol are the
+numbers to use for final generalization claims.
