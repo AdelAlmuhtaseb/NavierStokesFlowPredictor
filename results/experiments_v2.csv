@@ -1,0 +1,5 @@
+model,data,ntrain,lr,epochs,batch,seed,sched,base,val_error_mean,val_err_u,val_err_v,val_err_cp,test_error_mean,test_err_u,test_err_v,test_err_cp,train_seconds,name
+unet,panel_dataset,1200,0.001,100,32,0,none,16,0.0347,0.0046,0.0460,0.0536,0.0316,0.0045,0.0422,0.0481,87,unet_const100
+unet,panel_dataset,1200,0.001,100,32,0,cosine,16,0.0376,0.0048,0.0518,0.0563,0.0348,0.0047,0.0482,0.0516,86,unet_cos100
+unet,panel_dataset,1200,0.001,300,32,0,cosine,16,0.0230,0.0030,0.0309,0.0353,0.0209,0.0028,0.0281,0.0318,266,unet_cos300
+unet,panel_dataset,1200,0.001,300,32,0,cosine,32,0.0194,0.0025,0.0253,0.0303,0.0176,0.0024,0.0231,0.0273,531,unet_cos300_b32
