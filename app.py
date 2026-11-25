@@ -87,6 +87,17 @@ st.markdown(
         background: rgba(10,24,39,.55); border-radius: 14px;
     }
     h1, h2, h3 { letter-spacing: -.025em; }
+    .hero-wrap { display:flex; align-items:flex-start; justify-content:space-between; gap:1.5rem; flex-wrap:wrap; margin-bottom:1.4rem; }
+    .hero-kicker { display:inline-flex; align-items:center; gap:.5rem; border:1px solid rgba(92,211,199,.25); border-radius:999px; padding:.35rem .7rem; background:rgba(16,143,145,.10); color:#79e1d3; font-size:.68rem; font-weight:800; letter-spacing:.12em; text-transform:uppercase; }
+    .hero-title { margin-top:.7rem; }
+    .hero-sub { line-height:1.65; }
+    .status-chip { display:inline-flex; align-items:center; gap:.45rem; border:1px solid rgba(130,178,208,.18); border-radius:999px; padding:.48rem .75rem; background:rgba(13,31,48,.82); color:#c2d3df; font-size:.75rem; white-space:nowrap; }
+    .status-dot { width:.48rem; height:.48rem; border-radius:50%; display:inline-block; background:#54d6ad; box-shadow:0 0 12px rgba(84,214,173,.65); }
+    .section-heading { display:flex; align-items:center; gap:.65rem; color:#edf5fb; font-weight:750; letter-spacing:-.02em; margin-bottom:.8rem; }
+    .section-number { color:#69d5c7; font-size:.7rem; letter-spacing:.1em; font-weight:850; border:1px solid rgba(105,213,199,.28); background:rgba(16,143,145,.09); border-radius:7px; padding:.25rem .42rem; }
+    div[data-testid="stFileUploader"] section { border:1px dashed rgba(111,177,208,.32); border-radius:14px; background:rgba(10,24,39,.42); }
+    div[data-testid="stAlert"] { border-radius:12px; }
+    @media (max-width: 800px) { .block-container { padding-top:1.2rem; } .hero-title { font-size:2.15rem; } }
     </style>
     """,
     unsafe_allow_html=True,
@@ -285,10 +296,18 @@ with st.sidebar:
     st.divider()
     st.markdown("### Trained model")
     checkpoint_upload = st.file_uploader(
-        "Upload teammate's checkpoint (.pt)",
+        "Optional checkpoint override (.pt)",
         type=["pt"],
-        help="You can also place the checkpoint at results/unet_airfrans_g64.pt in the project.",
+        help="You normally do not need to upload anything. AeroLab automatically uses results/unet_airfrans_g64.pt when present. Upload a .pt file only if you want to use a different checkpoint.",
     )
+    if checkpoint_upload is not None:
+        st.success("Custom checkpoint selected")
+    elif DEFAULT_CHECKPOINT.is_file():
+        st.success("Project checkpoint detected")
+        st.caption("Automatically using results/unet_airfrans_g64.pt")
+    else:
+        st.warning("Checkpoint not found")
+        st.caption("Add results/unet_airfrans_g64.pt or upload a compatible .pt file.")
     st.caption(f"Compute device: **{DEVICE.upper()}**")
     st.divider()
     st.markdown(
@@ -300,18 +319,25 @@ with st.sidebar:
 
 # ------------------------------- Main screen -------------------------------
 
-st.markdown('<div class="eyebrow">NEURAL CFD SURROGATE · AIRFRANS</div>', unsafe_allow_html=True)
-st.markdown('<div class="hero-title">Airfoil Flow Predictor</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="hero-sub">Upload an airfoil profile, set the incoming flow, and inspect the predicted '
-    'velocity and pressure fields from your trained U-Net model.</div>',
+    f"""
+    <div class="hero-wrap">
+      <div>
+        <div class="hero-kicker">✦ &nbsp; Neural CFD surrogate &nbsp; / &nbsp; AirfRANS</div>
+        <div class="hero-title">AeroLab <span style="color:#6bd8cc">Flow Studio</span></div>
+        <div class="hero-sub">Explore airfoil aerodynamics with rapid U-Net predictions. Configure an operating point,
+        inspect the geometry, and visualize velocity and pressure fields in one workspace.</div>
+      </div>
+      <div class="status-chip"><span class="status-dot"></span> {"MODEL READY" if (checkpoint_upload is not None or DEFAULT_CHECKPOINT.is_file()) else "WEIGHTS REQUIRED"}</div>
+    </div>
+    """,
     unsafe_allow_html=True,
 )
 st.write("")
 
 left, right = st.columns([1.12, 0.88], gap="large")
 with left:
-    st.markdown("### 01 / Geometry input")
+    st.markdown('<div class="section-heading"><span class="section-number">01</span> Geometry input</div>', unsafe_allow_html=True)
     uploaded_image = st.file_uploader(
         "Drop an airfoil image here",
         type=["png", "jpg", "jpeg", "bmp"],
@@ -338,7 +364,7 @@ with left:
         )
 
 with right:
-    st.markdown("### 02 / Run setup")
+    st.markdown('<div class="section-heading"><span class="section-number">02</span> Run setup</div>', unsafe_allow_html=True)
     st.markdown(
         f"""
         <div class="panel">
@@ -404,7 +430,7 @@ if run_clicked and uploaded_image is not None:
 if "airfoil_mask" in st.session_state:
     mask = st.session_state["airfoil_mask"]
     st.write("")
-    st.markdown("### 03 / Detected geometry")
+    st.markdown('<div class="section-heading"><span class="section-number">03</span> Detected geometry</div>', unsafe_allow_html=True)
     geometry_col, detail_col = st.columns([1, 1])
     with geometry_col:
         fig_mask, ax_mask = plt.subplots(figsize=(8, 2.5), facecolor="#0c1a29")
@@ -448,7 +474,7 @@ if "airfoil_fields" in st.session_state:
     fields = st.session_state["airfoil_fields"]
     conditions = st.session_state.get("prediction_conditions", (alpha_deg, inlet_speed))
     st.write("")
-    st.markdown("### 04 / Predicted flow field")
+    st.markdown('<div class="section-heading"><span class="section-number">04</span> Predicted flow field</div>', unsafe_allow_html=True)
     metric1, metric2, metric3 = st.columns(3)
     metric1.metric("Angle of attack", f"{conditions[0]:.1f}°")
     metric2.metric("Inlet velocity", f"{conditions[1]} m/s")
@@ -464,7 +490,7 @@ if "airfoil_fields" in st.session_state:
     )
 elif "airfoil_mask" in st.session_state:
     st.write("")
-    st.markdown("### 04 / Prediction workspace")
+    st.markdown('<div class="section-heading"><span class="section-number">04</span> Prediction workspace</div>', unsafe_allow_html=True)
     st.markdown(
         """
         <div class="panel">
@@ -485,6 +511,7 @@ elif "airfoil_mask" in st.session_state:
 st.write("")
 st.markdown(
     '<div style="border-top:1px solid rgba(130,178,208,.16);padding-top:1rem;color:#7891a7;'
-    'font-size:.74rem">AEROLAB · NAVIER–STOKES FLOW PREDICTOR · Research prototype</div>',
+    'font-size:.74rem">AEROLAB FLOW STUDIO · NAVIER–STOKES FLOW PREDICTOR · Research prototype · '
+    'U-Net surrogate trained on AirfRANS data</div>',
     unsafe_allow_html=True,
 )
