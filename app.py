@@ -336,9 +336,8 @@ def estimate_naca_parameters(component: np.ndarray) -> dict:
 
     _, camber_position, coefficients = best_fit
     camber_ratio, camber_offset, camber_tilt = (float(value) for value in coefficients)
-    camber = raw_camber - (
-        camber_offset + camber_tilt * (x - 0.5)
-    )
+    baseline = camber_offset + camber_tilt * (x - 0.5)
+    camber = raw_camber - baseline
     if abs(camber_ratio) < 0.0015:
         camber_ratio, camber_position = 0.0, 0.4
 
