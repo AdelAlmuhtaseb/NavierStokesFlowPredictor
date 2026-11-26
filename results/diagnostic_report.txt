@@ -1,0 +1,21 @@
+AirfRANS independent-test error versus angle of attack
+====================================================
+
+Test simulations analyzed: 200
+Angle-of-attack range: -4.940 to 14.686 degrees
+Angle bin width: 5 degrees
+
+Spearman rank correlations (angle of attack versus error):
+  Horizontal velocity u/U: rho=0.1843, p=0.009007
+  Vertical velocity v/U: rho=-0.8436, p=2.286e-55
+  Pressure coefficient Cp: rho=-0.7947, p=8.283e-45
+  Three-channel mean: rho=-0.8129, p=2.277e-48
+
+Overall mean errors across all test simulations:
+  Horizontal velocity u/U: 1.3588%
+  Vertical velocity v/U: 10.2464%
+  Pressure coefficient Cp: 11.6653%
+  Three-channel mean: 7.7568%
+
+Angle-bin averages are in angle_bin_summary.csv.
+Plots are descriptive diagnostics; they do not prove that angle of attack causes the errors.
