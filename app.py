@@ -777,7 +777,7 @@ if "airfoil_mask" in st.session_state:
     mask = st.session_state["airfoil_mask"]
     st.write("")
     st.markdown(
-        '<div class="section-head"><span class="section-no">04</span> Geometry preprocessing</div>',
+        '<div class="section-head"><span class="section-no">03</span> Geometry preprocessing</div>',
         unsafe_allow_html=True,
     )
     geom_col, geom_info = st.columns([1, 1], gap="large")
@@ -828,7 +828,7 @@ if "naca_fit" in st.session_state:
 
     st.write("")
     st.markdown(
-        '<div class="section-head"><span class="section-no">03</span> NACA shape parameters & equation</div>',
+        '<div class="section-head"><span class="section-no">04</span> NACA shape parameters & equation</div>',
         unsafe_allow_html=True,
     )
     st.caption(
@@ -902,7 +902,7 @@ if "naca_fit" in st.session_state:
 elif "geometry_fit_error" in st.session_state:
     st.write("")
     st.markdown(
-        '<div class="section-head"><span class="section-no">03</span> NACA shape parameters & equation</div>',
+        '<div class="section-head"><span class="section-no">04</span> NACA shape parameters & equation</div>',
         unsafe_allow_html=True,
     )
     st.warning(f"Flow prediction can still run, but the NACA shape fit could not be completed: {st.session_state['geometry_fit_error']}")
