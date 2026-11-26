@@ -11,6 +11,7 @@ import streamlit as st
 import torch
 from PIL import Image
 from scipy import ndimage
+from scipy.optimize import least_squares
 
 from src.models import UNet
 
@@ -238,6 +239,178 @@ def image_to_mask(image: Image.Image, grid: int = GRID) -> tuple[np.ndarray, np.
     return mask, component.astype(np.uint8)
 
 
+def naca_thickness_shape(x: np.ndarray) -> np.ndarray:
+    """Unit-thickness NACA four-digit half-thickness distribution."""
+    x = np.clip(np.asarray(x, dtype=float), 0.0, 1.0)
+    return 5.0 * (
+        0.2969 * np.sqrt(x)
+        - 0.1260 * x
+        - 0.3516 * x**2
+        + 0.2843 * x**3
+        - 0.1015 * x**4
+    )
+
+
+def naca_camber_line(x: np.ndarray, m: float, p: float) -> np.ndarray:
+    """NACA four-digit mean camber line, with x measured in chord lengths."""
+    x = np.asarray(x, dtype=float)
+    if abs(m) < 1e-12:
+        return np.zeros_like(x)
+    left = x <= p
+    y = np.empty_like(x)
+    y[left] = (m / p**2) * (2.0 * p * x[left] - x[left] ** 2)
+    y[~left] = (m / (1.0 - p) ** 2) * (
+        (1.0 - 2.0 * p) + 2.0 * p * x[~left] - x[~left] ** 2
+    )
+    return y
+
+
+def naca_camber_slope(x: np.ndarray, m: float, p: float) -> np.ndarray:
+    """Derivative of the NACA four-digit mean camber line."""
+    x = np.asarray(x, dtype=float)
+    if abs(m) < 1e-12:
+        return np.zeros_like(x)
+    left = x <= p
+    slope = np.empty_like(x)
+    slope[left] = (2.0 * m / p**2) * (p - x[left])
+    slope[~left] = (2.0 * m / (1.0 - p) ** 2) * (p - x[~left])
+    return slope
+
+
+def estimate_naca_parameters(component: np.ndarray) -> dict:
+    """
+    Estimate an equivalent NACA four-digit profile from a filled binary
+    silhouette. This is a geometric fit, not a parameter prediction by the U-Net.
+    """
+    rows, cols = np.where(component > 0)
+    if len(cols) < 100:
+        raise ValueError("The detected airfoil outline has too few pixels for shape fitting.")
+
+    x0, x1 = int(cols.min()), int(cols.max())
+    chord = float(x1 - x0)
+    if chord < 40:
+        raise ValueError("Please upload a larger airfoil image (at least 40 pixels across the chord).")
+
+    x_samples = np.linspace(0.02, 0.98, 121)
+    upper, lower, kept_x = [], [], []
+    y_mid = (float(rows.min()) + float(rows.max())) / 2.0
+
+    for x_chord in x_samples:
+        col = int(round(x0 + x_chord * chord))
+        col = min(max(col, 0), component.shape[1] - 1)
+        occupied = np.flatnonzero(component[:, col] > 0)
+        if occupied.size < 2:
+            continue
+        upper.append((y_mid - float(occupied.min())) / chord)
+        lower.append((y_mid - float(occupied.max())) / chord)
+        kept_x.append(float(x_chord))
+
+    x = np.asarray(kept_x, dtype=float)
+    upper = np.asarray(upper, dtype=float)
+    lower = np.asarray(lower, dtype=float)
+    if len(x) < 30:
+        raise ValueError("The outline is too broken or thin to estimate NACA parameters.")
+
+    raw_camber = 0.5 * (upper + lower)
+    half_thickness = 0.5 * (upper - lower)
+
+    # Remove small image tilt/vertical offset by aligning the measured leading-
+    # and trailing-edge camber baselines before fitting a standard chord line.
+    left = x <= 0.07
+    right = x >= 0.93
+    if left.sum() < 2 or right.sum() < 2:
+        raise ValueError("The image must show both the leading and trailing edges.")
+    x_left, x_right = float(np.median(x[left])), float(np.median(x[right]))
+    y_left, y_right = float(np.median(raw_camber[left])), float(np.median(raw_camber[right]))
+    baseline = y_left + (y_right - y_left) * (x - x_left) / max(x_right - x_left, 1e-9)
+    camber = raw_camber - baseline
+
+    region = (x >= 0.05) & (x <= 0.95)
+    thickness_basis = naca_thickness_shape(x[region])
+    measured_half_thickness = half_thickness[region]
+    denominator = float(np.dot(thickness_basis, thickness_basis))
+    if denominator <= 1e-12:
+        raise ValueError("The uploaded outline does not contain a measurable thickness profile.")
+    thickness_ratio = max(0.0, float(np.dot(thickness_basis, measured_half_thickness) / denominator))
+
+    if float(np.max(np.abs(camber[region]))) < 0.0015:
+        camber_ratio, camber_position = 0.0, 0.4
+    else:
+        peak_index = int(np.argmax(np.abs(camber[region])))
+        x_region = x[region]
+        c_region = camber[region]
+        initial_m = float(np.clip(c_region[peak_index], -0.08, 0.08))
+        initial_p = float(np.clip(x_region[peak_index], 0.10, 0.90))
+        fit = least_squares(
+            lambda params: naca_camber_line(x_region, params[0], params[1]) - c_region,
+            x0=np.array([initial_m, initial_p]),
+            bounds=(np.array([-0.09, 0.10]), np.array([0.09, 0.90])),
+            loss="soft_l1",
+            f_scale=0.002,
+        )
+        camber_ratio, camber_position = float(fit.x[0]), float(fit.x[1])
+
+    fitted_camber = naca_camber_line(x[region], camber_ratio, camber_position)
+    fitted_half_thickness = thickness_ratio * naca_thickness_shape(x[region])
+    camber_rmse = float(np.sqrt(np.mean((camber[region] - fitted_camber) ** 2)))
+    thickness_rmse = float(np.sqrt(np.mean((half_thickness[region] - fitted_half_thickness) ** 2)))
+
+    x_fit = np.linspace(0.001, 0.999, 300)
+    yt = thickness_ratio * naca_thickness_shape(x_fit)
+    yc = naca_camber_line(x_fit, camber_ratio, camber_position)
+    theta = np.arctan(naca_camber_slope(x_fit, camber_ratio, camber_position))
+    x_upper = x_fit - yt * np.sin(theta)
+    y_upper = yc + yt * np.cos(theta)
+    x_lower = x_fit + yt * np.sin(theta)
+    y_lower = yc - yt * np.cos(theta)
+
+    naca_code = None
+    if camber_ratio >= -0.0005:
+        camber_digit = int(round(max(0.0, camber_ratio) * 100.0))
+        position_digit = 0 if camber_digit == 0 else int(round(camber_position * 10.0))
+        thickness_digits = int(round(thickness_ratio * 100.0))
+        if 0 <= camber_digit <= 9 and 0 <= position_digit <= 9 and 0 <= thickness_digits <= 99:
+            naca_code = f"NACA {camber_digit}{position_digit}{thickness_digits:02d}"
+
+    return {
+        "m": camber_ratio,
+        "p": camber_position,
+        "t": thickness_ratio,
+        "naca_code": naca_code,
+        "camber_rmse": camber_rmse,
+        "thickness_rmse": thickness_rmse,
+        "x_measured": x,
+        "upper_measured": upper - baseline,
+        "lower_measured": lower - baseline,
+        "x_upper_fit": x_upper,
+        "y_upper_fit": y_upper,
+        "x_lower_fit": x_lower,
+        "y_lower_fit": y_lower,
+        "samples": len(x),
+    }
+
+
+def plot_naca_fit(fit: dict):
+    """Compare the uploaded silhouette outline with its fitted NACA profile."""
+    fig, ax = plt.subplots(figsize=(9, 3.2), facecolor="#0b1927")
+    ax.set_facecolor("#0b1927")
+    ax.plot(fit["x_measured"], fit["upper_measured"], color="#dceaf4", lw=1.5, label="Image outline")
+    ax.plot(fit["x_measured"], fit["lower_measured"], color="#dceaf4", lw=1.5)
+    ax.plot(fit["x_upper_fit"], fit["y_upper_fit"], "--", color="#70dccc", lw=1.8, label="NACA fit")
+    ax.plot(fit["x_lower_fit"], fit["y_lower_fit"], "--", color="#70dccc", lw=1.8)
+    ax.axhline(0, color="#8da6bb", lw=0.6, alpha=0.35)
+    ax.set_xlim(0, 1)
+    ax.set_xlabel("x / chord", color="#9eb2c5")
+    ax.set_ylabel("y / chord", color="#9eb2c5")
+    ax.tick_params(colors="#9eb2c5", labelsize=8)
+    ax.grid(color="#8da6bb", alpha=0.10, linewidth=0.5)
+    ax.legend(facecolor="#102437", edgecolor="#294258", labelcolor="#dceaf4", fontsize=8)
+    for spine in ax.spines.values():
+        spine.set_color("#294258")
+    fig.tight_layout()
+    return fig
+
+
 @st.cache_resource(show_spinner=False)
 def load_model(checkpoint_bytes: bytes, checkpoint_hash: str):
     """Load and cache the trained project checkpoint."""
@@ -442,9 +615,7 @@ st.markdown(
       </div>
       <div class="hero-title">AeroLab <span>Flow Studio</span></div>
       <div class="hero-copy">
-        Explore airfoil aerodynamics with rapid neural flow-field predictions.
-        Upload a profile, set the operating point, and inspect the predicted
-        velocity and pressure distributions.
+        Upload an airfoil silhouette to estimate its NACA four-digit geometry, generate the corresponding equations, and inspect the U-Net pressure and velocity predictions at your selected operating point.
       </div>
     </div>
     """,
@@ -532,7 +703,7 @@ if uploaded_image is None:
     for key in (
         "_prediction_signature", "airfoil_mask", "airfoil_component",
         "airfoil_fields", "inference_ms", "prediction_conditions",
-        "prediction_error", "airfoil_source_name",
+        "prediction_error", "airfoil_source_name", "naca_fit", "geometry_fit_error",
     ):
         st.session_state.pop(key, None)
 else:
@@ -560,6 +731,12 @@ else:
                 mask, component = image_to_mask(source_image)
                 st.session_state["airfoil_mask"] = mask
                 st.session_state["airfoil_component"] = component
+                try:
+                    st.session_state["naca_fit"] = estimate_naca_parameters(component)
+                    st.session_state.pop("geometry_fit_error", None)
+                except Exception as fit_exc:
+                    st.session_state.pop("naca_fit", None)
+                    st.session_state["geometry_fit_error"] = str(fit_exc)
 
                 if checkpoint_bytes is None:
                     st.session_state["prediction_error"] = (
@@ -601,7 +778,7 @@ if "airfoil_mask" in st.session_state:
     mask = st.session_state["airfoil_mask"]
     st.write("")
     st.markdown(
-        '<div class="section-head"><span class="section-no">03</span> Geometry preprocessing</div>',
+        '<div class="section-head"><span class="section-no">04</span> Geometry preprocessing</div>',
         unsafe_allow_html=True,
     )
     geom_col, geom_info = st.columns([1, 1], gap="large")
@@ -645,13 +822,99 @@ if "airfoil_mask" in st.session_state:
         g1.metric("Grid resolution", "64 × 64")
         g2.metric("Body cells", f"{int(mask.sum()):,}")
 
+
+if "naca_fit" in st.session_state:
+    fit = st.session_state["naca_fit"]
+    m, p, t = fit["m"], fit["p"], fit["t"]
+
+    st.write("")
+    st.markdown(
+        '<div class="section-head"><span class="section-no">03</span> NACA shape parameters & equation</div>',
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "Estimated from the uploaded silhouette using a geometric fit to the NACA four-digit family. "
+        "These parameters are extracted from the image; they are not outputs of the U-Net."
+    )
+
+    p_label = "— (symmetric profile)" if abs(m) < 0.0005 else f"{p * 100:.1f}%"
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Maximum camber", f"{m * 100:.2f}%")
+    c2.metric("Camber position", p_label)
+    c3.metric("Maximum thickness", f"{t * 100:.2f}%")
+
+    if fit["naca_code"]:
+        st.success(f"Nearest four-digit designation: {fit['naca_code']}")
+    else:
+        st.info(
+            "The fitted profile does not map cleanly to a standard positive-camber NACA four-digit designation. "
+            "The signed camber and thickness estimates are still shown."
+        )
+
+    fit_col, fit_details = st.columns([1.35, 0.65], gap="large")
+    with fit_col:
+        fig_fit = plot_naca_fit(fit)
+        st.pyplot(fig_fit, use_container_width=True)
+        plt.close(fig_fit)
+    with fit_details:
+        st.markdown(
+            """
+            <div class="surface">
+              <div class="surface-label">Geometry fit diagnostics</div>
+              <div class="surface-title">Image outline vs. NACA reconstruction</div>
+              <div class="muted" style="font-size:.8rem;line-height:1.65">
+                Solid line: measured image outline. Dashed line: reconstructed NACA four-digit profile.
+                Lower residuals indicate a closer geometric match.
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.metric("Camber-line RMSE", f"{fit['camber_rmse'] * 100:.3f}% chord")
+        st.metric("Half-thickness RMSE", f"{fit['thickness_rmse'] * 100:.3f}% chord")
+        st.metric("Outline samples", f"{fit['samples']}")
+
+    with st.expander("View generated NACA equations", expanded=True):
+        st.caption("All coordinates are dimensionless and normalized by chord length (x/c).")
+        st.markdown("**Thickness distribution with the estimated thickness parameter**")
+        st.latex(
+            fr"y_t(x)=5({t:.5f})\left(0.2969\sqrt{{x}}-0.1260x-0.3516x^2+0.2843x^3-0.1015x^4\right)"
+        )
+        st.markdown("**Mean camber line with the estimated camber and position**")
+        if abs(m) < 0.0005:
+            st.latex(r"y_c(x)=0")
+        else:
+            st.latex(
+                fr"y_c(x)=\begin{{cases}}"
+                fr"\dfrac{{{m:.5f}}}{{{p:.4f}^2}}\left(2({p:.4f})x-x^2\right), & 0\leq x\leq {p:.4f}\\"
+                fr"\dfrac{{{m:.5f}}}{{(1-{p:.4f})^2}}\left((1-2({p:.4f}))+2({p:.4f})x-x^2\right), & {p:.4f}<x\leq 1"
+                fr"\end{{cases}}"
+            )
+        st.markdown("**Upper and lower surface coordinates**")
+        st.latex(
+            r"x_u=x-y_t\sin\theta,\quad y_u=y_c+y_t\cos\theta"
+        )
+        st.latex(
+            r"x_l=x+y_t\sin\theta,\quad y_l=y_c-y_t\cos\theta"
+        )
+        st.latex(
+            r"\theta=\tan^{-1}\left(\dfrac{dy_c}{dx}\right)"
+        )
+elif "geometry_fit_error" in st.session_state:
+    st.write("")
+    st.markdown(
+        '<div class="section-head"><span class="section-no">03</span> NACA shape parameters & equation</div>',
+        unsafe_allow_html=True,
+    )
+    st.warning(f"Flow prediction can still run, but the NACA shape fit could not be completed: {st.session_state['geometry_fit_error']}")
+
 if "airfoil_fields" in st.session_state:
     fields = st.session_state["airfoil_fields"]
     conditions = st.session_state["prediction_conditions"]
 
     st.write("")
     st.markdown(
-        '<div class="section-head result-intro"><span class="section-no">04</span> Predicted flow field</div>',
+        '<div class="section-head result-intro"><span class="section-no">05</span> Predicted flow field</div>',
         unsafe_allow_html=True,
     )
     st.markdown(
