@@ -1,7 +1,14 @@
-torch
+# Deep learning (PyTorch 2.15+ supports Python 3.14 on Windows)
+torch>=2.15
+
+# Numerical processing and image geometry fitting
 numpy
-matplotlib
-airfrans
 scipy
-streamlit
 pillow
+
+# Dashboard and plots
+streamlit
+matplotlib
+
+# AirfRANS dataset download / conversion tools
+airfrans
