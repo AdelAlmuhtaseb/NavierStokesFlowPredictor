@@ -11,7 +11,6 @@ import streamlit as st
 import torch
 from PIL import Image
 from scipy import ndimage
-from scipy.optimize import least_squares
 
 from src.models import UNet
 
@@ -314,41 +313,41 @@ def estimate_naca_parameters(component: np.ndarray) -> dict:
     raw_camber = 0.5 * (upper + lower)
     half_thickness = 0.5 * (upper - lower)
 
-    # Remove small image tilt/vertical offset by aligning the measured leading-
-    # and trailing-edge camber baselines before fitting a standard chord line.
-    left = x <= 0.07
-    right = x >= 0.93
-    if left.sum() < 2 or right.sum() < 2:
-        raise ValueError("The image must show both the leading and trailing edges.")
-    x_left, x_right = float(np.median(x[left])), float(np.median(x[right]))
-    y_left, y_right = float(np.median(raw_camber[left])), float(np.median(raw_camber[right]))
-    baseline = y_left + (y_right - y_left) * (x - x_left) / max(x_right - x_left, 1e-9)
-    camber = raw_camber - baseline
-
+    # Fit the NACA camber curve together with a small image offset and tilt.
+    # Treating the offset/tilt as nuisance parameters avoids confusing real
+    # camber near the leading edge with a slanted image baseline.
     region = (x >= 0.05) & (x <= 0.95)
-    thickness_basis = naca_thickness_shape(x[region])
+    x_region = x[region]
+    measured_camber = raw_camber[region]
+    if len(x_region) < 30:
+        raise ValueError("The outline does not contain enough points to fit its camber line.")
+
+    best_fit = None
+    for candidate_p in np.linspace(0.10, 0.90, 161):
+        camber_basis = naca_camber_line(x_region, 1.0, float(candidate_p))
+        design = np.column_stack(
+            [camber_basis, np.ones_like(x_region), x_region - 0.5]
+        )
+        coefficients, *_ = np.linalg.lstsq(design, measured_camber, rcond=None)
+        residual = measured_camber - design @ coefficients
+        score = float(np.mean(residual**2))
+        if best_fit is None or score < best_fit[0]:
+            best_fit = (score, float(candidate_p), coefficients)
+
+    _, camber_position, coefficients = best_fit
+    camber_ratio, camber_offset, camber_tilt = (float(value) for value in coefficients)
+    camber = raw_camber - (
+        camber_offset + camber_tilt * (x - 0.5)
+    )
+    if abs(camber_ratio) < 0.0015:
+        camber_ratio, camber_position = 0.0, 0.4
+
+    thickness_basis = naca_thickness_shape(x_region)
     measured_half_thickness = half_thickness[region]
     denominator = float(np.dot(thickness_basis, thickness_basis))
     if denominator <= 1e-12:
         raise ValueError("The uploaded outline does not contain a measurable thickness profile.")
     thickness_ratio = max(0.0, float(np.dot(thickness_basis, measured_half_thickness) / denominator))
-
-    if float(np.max(np.abs(camber[region]))) < 0.0015:
-        camber_ratio, camber_position = 0.0, 0.4
-    else:
-        peak_index = int(np.argmax(np.abs(camber[region])))
-        x_region = x[region]
-        c_region = camber[region]
-        initial_m = float(np.clip(c_region[peak_index], -0.08, 0.08))
-        initial_p = float(np.clip(x_region[peak_index], 0.10, 0.90))
-        fit = least_squares(
-            lambda params: naca_camber_line(x_region, params[0], params[1]) - c_region,
-            x0=np.array([initial_m, initial_p]),
-            bounds=(np.array([-0.09, 0.10]), np.array([0.09, 0.90])),
-            loss="soft_l1",
-            f_scale=0.002,
-        )
-        camber_ratio, camber_position = float(fit.x[0]), float(fit.x[1])
 
     fitted_camber = naca_camber_line(x[region], camber_ratio, camber_position)
     fitted_half_thickness = thickness_ratio * naca_thickness_shape(x[region])
@@ -834,7 +833,7 @@ if "naca_fit" in st.session_state:
     )
     st.caption(
         "Estimated from the uploaded silhouette using a geometric fit to the NACA four-digit family. "
-        "These parameters are extracted from the image; they are not outputs of the U-Net."
+        "These are best-fit geometric estimates from the image, not outputs of the U-Net. Arbitrary profiles may not belong exactly to the NACA four-digit family."
     )
 
     p_label = "— (symmetric profile)" if abs(m) < 0.0005 else f"{p * 100:.1f}%"
