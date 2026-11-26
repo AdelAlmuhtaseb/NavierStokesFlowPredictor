@@ -65,17 +65,17 @@ def main():
     )
     parser.add_argument(
         "--data",
-        default=r"data\\independent_test_20261126\\airfrans_test_g64.npz",
+        default=r"data\independent_test_20261126\\airfrans_test_g64.npz",
         help="Independent AirfRANS test NPZ file",
     )
     parser.add_argument(
         "--errors",
-        default=r"results\\airfrans_independent_test_20261126_run1.csv",
+        default=r"results\airfrans_independent_test_20261126_run1.csv",
         help="Per-simulation CSV produced by evaluate_airfrans_test.py",
     )
     parser.add_argument(
         "--out",
-        default=r"results\\angle_of_attack_diagnostic_20261126",
+        default=r"results\angle_of_attack_diagnostic_20261126",
         help="Base output directory (a new suffix is used if it already exists)",
     )
     parser.add_argument(
@@ -213,7 +213,7 @@ def main():
         ax.set_ylabel("Relative L2 error (%)")
         ax.grid(True, alpha=0.25)
         ax.text(
-            0.02, 0.97, f"Spearman rho = {rho:.3f}\\np = {p_value:.3g}",
+            0.02, 0.97, f"Spearman rho = {rho:.3f}\np = {p_value:.3g}",
             transform=ax.transAxes, ha="left", va="top",
             bbox={"boxstyle": "round,pad=0.3", "facecolor": "white", "alpha": 0.8},
         )
@@ -226,23 +226,23 @@ def main():
 
     report_path = out_dir / "diagnostic_report.txt"
     with report_path.open("w", encoding="utf-8") as handle:
-        handle.write("AirfRANS independent-test error versus angle of attack\\n")
-        handle.write("====================================================\\n\\n")
-        handle.write(f"Test simulations analyzed: {len(names)}\\n")
+        handle.write("AirfRANS independent-test error versus angle of attack\n")
+        handle.write("====================================================\n\n")
+        handle.write(f"Test simulations analyzed: {len(names)}\n")
         handle.write(
             f"Angle-of-attack range: {aoa_deg.min():.3f} to "
-            f"{aoa_deg.max():.3f} degrees\\n"
+            f"{aoa_deg.max():.3f} degrees\n"
         )
-        handle.write(f"Angle bin width: {width:g} degrees\\n\\n")
-        handle.write("Spearman rank correlations (angle of attack versus error):\\n")
+        handle.write(f"Angle bin width: {width:g} degrees\n\n")
+        handle.write("Spearman rank correlations (angle of attack versus error):\n")
         for i, (_, label) in enumerate(CHANNELS):
             rho, p_value = safe_spearman(aoa_deg, err_pct[:, i])
-            handle.write(f"  {label}: rho={rho:.4f}, p={p_value:.4g}\\n")
+            handle.write(f"  {label}: rho={rho:.4f}, p={p_value:.4g}\n")
         rho, p_value = safe_spearman(aoa_deg, combined_pct)
-        handle.write(f"  Three-channel mean: rho={rho:.4f}, p={p_value:.4g}\\n\\n")
-        handle.write("Angle-bin averages are in angle_bin_summary.csv.\\n")
+        handle.write(f"  Three-channel mean: rho={rho:.4f}, p={p_value:.4g}\n\n")
+        handle.write("Angle-bin averages are in angle_bin_summary.csv.\n")
         handle.write(
-            "These plots are descriptive diagnostics; correlation does not prove causation.\\n"
+            "These plots are descriptive diagnostics; correlation does not prove causation.\n"
         )
 
     print(f"Analyzed {len(names)} test simulations.")
@@ -262,7 +262,7 @@ def main():
             f"Cp={row['Cp_mean_percent']:.2f}%, "
             f"combined={row['three_channel_mean_mean_percent']:.2f}%"
         )
-    print(f"\\nNew outputs saved in: {out_dir}")
+    print(f"\nNew outputs saved in: {out_dir}")
     print(f"  Plot: {plot_path.name}")
     print(f"  Bin summary: {summary_path.name}")
     print(f"  Per-simulation data: {joined_path.name}")
