@@ -737,7 +737,7 @@ with st.sidebar:
     checkpoint_upload = st.file_uploader(
         "Optional checkpoint override",
         type=["pt"],
-        help="Normally leave this empty. AeroLab automatically uses results/unet_airfrans_g64.pt when it is present.",
+        help="Normally leave this empty. AeroLab prefers results/unet_airfrans_g64_b32_e300.pt and falls back to results/unet_airfrans_g64.pt.",
     )
     if checkpoint_upload is not None:
         st.success("Custom checkpoint selected")
