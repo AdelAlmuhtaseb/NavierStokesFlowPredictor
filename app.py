@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import io
 import time
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation, PillowWriter
+from matplotlib.collections import LineCollection
 import numpy as np
 import streamlit as st
 import torch
@@ -18,7 +21,8 @@ from src.models import UNet
 X_MIN, X_MAX = -0.5, 1.5
 Y_MIN, Y_MAX = -1.0, 1.0
 GRID = 64
-DEFAULT_CHECKPOINT = Path("results/unet_airfrans_g64.pt")
+PREFERRED_CHECKPOINT = Path("results/unet_airfrans_g64_b32_e300.pt")
+FALLBACK_CHECKPOINT = Path("results/unet_airfrans_g64.pt")
 
 DEVICE = "cuda" if torch.cuda.is_available() else (
     "mps" if torch.backends.mps.is_available() else "cpu"
@@ -436,6 +440,14 @@ def load_model(checkpoint_bytes: bytes, checkpoint_hash: str):
     return model, mean, std
 
 
+def find_default_checkpoint() -> Path | None:
+    """Prefer the recently uploaded model; retain the earlier checkpoint as a fallback."""
+    for candidate in (PREFERRED_CHECKPOINT, FALLBACK_CHECKPOINT):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def sync_device() -> None:
     """Wait for asynchronous accelerator work before measuring elapsed time."""
     if DEVICE == "cuda":
@@ -536,7 +548,151 @@ def plot_fields(fields: np.ndarray, mask: np.ndarray):
     return fig
 
 
+
+def make_flow_animation(
+    fields: np.ndarray,
+    mask: np.ndarray,
+    alpha_deg: float,
+    inlet_speed: float,
+    frames: int = 48,
+) -> bytes:
+    """
+    Advect visual tracer particles through the predicted steady velocity field.
+    This visualizes the model's field; it is not an unsteady CFD calculation.
+    """
+    u = np.nan_to_num(fields[0], nan=0.0, posinf=0.0, neginf=0.0)
+    v = np.nan_to_num(fields[1], nan=0.0, posinf=0.0, neginf=0.0)
+    fluid = mask < 0.5
+    x = np.linspace(X_MIN, X_MAX, GRID)
+    y = np.linspace(Y_MIN, Y_MAX, GRID)
+    xx, yy = np.meshgrid(x, y, indexing="xy")
+    speed = np.sqrt(u**2 + v**2)
+
+    fig, ax = plt.subplots(figsize=(9.0, 4.8), facecolor="#0b1927")
+    ax.set_facecolor("#0b1927")
+    image = ax.imshow(
+        np.ma.masked_where(~fluid, speed),
+        extent=[X_MIN, X_MAX, Y_MIN, Y_MAX],
+        origin="lower",
+        cmap="turbo",
+        interpolation="bilinear",
+        aspect="auto",
+    )
+    colorbar = fig.colorbar(image, ax=ax, fraction=0.035, pad=0.025)
+    colorbar.set_label("speed / inlet speed", color="#dceaf4")
+    colorbar.ax.tick_params(colors="#b9cad8", labelsize=8)
+
+    if np.any(mask > 0.5) and np.any(mask < 0.5):
+        ax.contourf(
+            xx, yy, mask, levels=[0.5, 1.5], colors=["#e8eef3"], alpha=1.0
+        )
+        ax.contour(
+            xx, yy, mask, levels=[0.5], colors=["#ffffff"], linewidths=0.9
+        )
+
+    try:
+        ax.streamplot(
+            x, y,
+            np.ma.masked_where(~fluid, u),
+            np.ma.masked_where(~fluid, v),
+            density=1.0,
+            color=(1.0, 1.0, 1.0, 0.24),
+            linewidth=0.45,
+            arrowsize=0.5,
+        )
+    except (ValueError, RuntimeError):
+        pass
+
+    particle_count = 20
+    seed_y = np.linspace(Y_MIN + 0.14, Y_MAX - 0.14, particle_count)
+    positions = np.column_stack(
+        [np.full(particle_count, X_MIN + 0.02), seed_y]
+    ).astype(float)
+    respawns = np.zeros(particle_count, dtype=int)
+    histories: list[list[np.ndarray]] = [[] for _ in range(particle_count)]
+
+    trails = LineCollection(
+        [], colors=[(0.92, 0.99, 1.0, 0.48)], linewidths=1.15, zorder=4
+    )
+    ax.add_collection(trails)
+    particles = ax.scatter(
+        positions[:, 0], positions[:, 1],
+        s=22, c="#f4fff9", edgecolors="#147f91",
+        linewidths=0.6, zorder=5,
+    )
+
+    def sample(field: np.ndarray, points: np.ndarray, order: int = 1) -> np.ndarray:
+        ix = (points[:, 0] - X_MIN) / (X_MAX - X_MIN) * (GRID - 1)
+        iy = (points[:, 1] - Y_MIN) / (Y_MAX - Y_MIN) * (GRID - 1)
+        return ndimage.map_coordinates(
+            field, [iy, ix], order=order, mode="nearest"
+        )
+
+    def update(_frame: int):
+        nonlocal positions
+        u0 = sample(u, positions)
+        v0 = sample(v, positions)
+        midpoint = positions + 0.5 * 0.035 * np.column_stack([u0, v0])
+        um = sample(u, midpoint)
+        vm = sample(v, midpoint)
+        candidate = positions + 0.035 * np.column_stack([um, vm])
+
+        in_domain = (
+            (candidate[:, 0] >= X_MIN) & (candidate[:, 0] <= X_MAX)
+            & (candidate[:, 1] >= Y_MIN) & (candidate[:, 1] <= Y_MAX)
+        )
+        is_fluid = sample(mask, candidate, order=0) < 0.5
+        valid = in_domain & is_fluid & np.isfinite(candidate).all(axis=1)
+
+        for i in range(particle_count):
+            if valid[i]:
+                positions[i] = candidate[i]
+            else:
+                respawns[i] += 1
+                new_y = seed_y[(i + respawns[i]) % particle_count]
+                positions[i] = (X_MIN + 0.02, new_y)
+                histories[i].clear()
+
+            histories[i].append(positions[i].copy())
+            if len(histories[i]) > 10:
+                histories[i].pop(0)
+
+        trails.set_segments(
+            [np.asarray(history) for history in histories if len(history) > 1]
+        )
+        particles.set_offsets(positions)
+        return trails, particles
+
+    ax.set_xlim(X_MIN, X_MAX)
+    ax.set_ylim(Y_MIN, Y_MAX)
+    ax.set_xlabel("x / chord", color="#b9cad8")
+    ax.set_ylabel("y / chord", color="#b9cad8")
+    ax.tick_params(colors="#9eb2c5", labelsize=8)
+    ax.set_title(
+        f"Predicted airflow  |  AoA {alpha_deg:.1f}°  |  inlet {inlet_speed} m/s",
+        color="#f0f6fb", fontsize=11, fontweight="bold", pad=10,
+    )
+    ax.text(
+        0.02, 0.025, "Tracer paths through the steady predicted velocity field",
+        transform=ax.transAxes, color="#e1edf5", fontsize=7,
+        bbox={"facecolor": "#0b1927", "edgecolor": "none", "alpha": 0.65},
+    )
+    for spine in ax.spines.values():
+        spine.set_color("#294258")
+    fig.tight_layout()
+
+    animation = FuncAnimation(
+        fig, update, frames=frames, interval=70, blit=False, repeat=True
+    )
+    output = io.BytesIO()
+    animation.save(output, writer=PillowWriter(fps=14), dpi=85)
+    plt.close(fig)
+    return output.getvalue()
+
+
 # ------------------------------- Sidebar controls -------------------------------
+
+default_checkpoint = find_default_checkpoint()
 
 with st.sidebar:
     st.markdown(
@@ -585,12 +741,12 @@ with st.sidebar:
     )
     if checkpoint_upload is not None:
         st.success("Custom checkpoint selected")
-    elif DEFAULT_CHECKPOINT.is_file():
+    elif default_checkpoint is not None:
         st.success("Project checkpoint detected")
-        st.caption("Using results/unet_airfrans_g64.pt")
+        st.caption(f"Using {default_checkpoint.as_posix()}")
     else:
         st.warning("Checkpoint not found")
-        st.caption("Add the project checkpoint in results/ or upload a compatible .pt file.")
+        st.caption("Add the preferred or fallback checkpoint in results/, or upload a compatible .pt file.")
     st.caption(f"Compute device: {DEVICE.upper()}")
     st.divider()
     st.markdown(
@@ -602,7 +758,7 @@ with st.sidebar:
 
 # -------------------------------- Main workspace --------------------------------
 
-checkpoint_ready = checkpoint_upload is not None or DEFAULT_CHECKPOINT.is_file()
+checkpoint_ready = checkpoint_upload is not None or default_checkpoint is not None
 st.markdown(
     f"""
     <div class="hero">
@@ -702,6 +858,7 @@ if uploaded_image is None:
         "_prediction_signature", "airfoil_mask", "airfoil_component",
         "airfoil_fields", "inference_ms", "prediction_conditions",
         "prediction_error", "airfoil_source_name", "naca_fit", "geometry_fit_error",
+        "flow_animation_gif",
     ):
         st.session_state.pop(key, None)
 else:
@@ -709,7 +866,7 @@ else:
     image_hash = hashlib.sha256(image_bytes).hexdigest()
 
     checkpoint_bytes = checkpoint_upload.getvalue() if checkpoint_upload is not None else (
-        DEFAULT_CHECKPOINT.read_bytes() if DEFAULT_CHECKPOINT.is_file() else None
+        default_checkpoint.read_bytes() if default_checkpoint is not None else None
     )
     checkpoint_hash = hashlib.sha256(checkpoint_bytes).hexdigest() if checkpoint_bytes else "missing"
 
@@ -719,6 +876,7 @@ else:
 
     if st.session_state.get("_prediction_signature") != signature:
         st.session_state["_prediction_signature"] = signature
+        st.session_state.pop("flow_animation_gif", None)
         st.session_state.pop("airfoil_fields", None)
         st.session_state.pop("prediction_error", None)
         st.session_state["airfoil_source_name"] = uploaded_image.name
@@ -738,8 +896,9 @@ else:
 
                 if checkpoint_bytes is None:
                     st.session_state["prediction_error"] = (
-                        "The geometry is ready, but the trained checkpoint was not found. "
-                        "Add results/unet_airfrans_g64.pt or upload a compatible checkpoint in the sidebar."
+                        "The geometry is ready, but no trained checkpoint was found. "
+                        "Add results/unet_airfrans_g64_b32_e300.pt (preferred) or "
+                        "results/unet_airfrans_g64.pt (fallback), or upload a compatible checkpoint."
                     )
                 else:
                     loaded = load_model(checkpoint_bytes, checkpoint_hash)
@@ -934,6 +1093,37 @@ if "airfoil_fields" in st.session_state:
         "Streamlines are drawn from the predicted velocity field. This is a neural surrogate prediction, "
         "not a new Navier–Stokes CFD solve."
     )
+
+    with st.expander("Animate predicted airflow", expanded=False):
+        st.caption(
+            "Create a looping GIF of tracer particles moving through the predicted velocity field. "
+            "This is an animation of the steady model prediction, not a time-dependent CFD solve."
+        )
+        if st.button("Generate airflow animation", key="generate_flow_animation"):
+            try:
+                with st.spinner("Advecting particles through the predicted flow field..."):
+                    st.session_state["flow_animation_gif"] = make_flow_animation(
+                        fields, mask, conditions[0], conditions[1]
+                    )
+                st.success("Animation is ready.")
+            except Exception as exc:
+                st.error(f"Could not create the animation: {exc}")
+
+        gif_bytes = st.session_state.get("flow_animation_gif")
+        if gif_bytes:
+            gif_b64 = base64.b64encode(gif_bytes).decode("ascii")
+            st.markdown(
+                f'<img src="data:image/gif;base64,{gif_b64}" '
+                'style="width:100%;height:auto;border-radius:12px;border:1px solid #294258" />',
+                unsafe_allow_html=True,
+            )
+            st.download_button(
+                "Download airflow GIF",
+                data=gif_bytes,
+                file_name="aerolab_predicted_airflow.gif",
+                mime="image/gif",
+                key="download_flow_animation",
+            )
 
 st.markdown(
     """
