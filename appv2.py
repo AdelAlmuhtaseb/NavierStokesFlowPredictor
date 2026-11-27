@@ -4,6 +4,7 @@ import base64
 import hashlib
 import io
 import time
+import tempfile
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -732,10 +733,20 @@ def make_flow_animation(
     animation = FuncAnimation(
         fig, update, frames=frames, interval=70, blit=False, repeat=True
     )
-    output = io.BytesIO()
-    animation.save(output, writer=PillowWriter(fps=14), dpi=82)
-    plt.close(fig)
-    return output.getvalue()
+
+    # Matplotlib's PillowWriter requires a filesystem path, not BytesIO.
+    # Use a temporary GIF and return its bytes for Streamlit's preview/download.
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".gif", delete=False) as temp_file:
+            temp_path = Path(temp_file.name)
+
+        animation.save(str(temp_path), writer=PillowWriter(fps=14), dpi=82)
+        return temp_path.read_bytes()
+    finally:
+        plt.close(fig)
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
 
 
 # ------------------------------- Sidebar controls -------------------------------
